@@ -160,7 +160,8 @@ export default function ExportSettings({
               >
                 <option value="transparent">Transparent</option>
                 <option value="#ffffff">White</option>
-                <option value="#0f172a">Dark</option>
+                <option value="#000000">Black</option>
+                <option value="#0f172a">Dark blue</option>
                 <option value="custom">Custom color</option>
               </select>
               {settings.background === 'custom' && (
@@ -175,8 +176,8 @@ export default function ExportSettings({
             </div>
           </Field>
           <p className="mb-5 text-xs leading-relaxed text-slate-400">
-            The checkerboard shows transparency. GIF supports fully transparent pixels;
-            choose a solid background for softer edges.
+            Preview updates immediately. Transparent clears the SVG canvas background;
+            white, black, or a custom color replaces it. Artwork colors stay intact.
           </p>
           <details className="border-y border-white/10">
             <summary className="py-4 text-sm">Advanced options</summary>

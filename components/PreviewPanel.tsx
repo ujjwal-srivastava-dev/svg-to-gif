@@ -26,6 +26,7 @@ export default function PreviewPanel({
   } = controller;
   const background =
     settings.background === 'custom' ? settings.customColor : settings.background;
+  const transparent = resultTab || background === 'transparent';
   return (
     <section className="panel" aria-label="Animation preview">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
@@ -50,7 +51,8 @@ export default function PreviewPanel({
         </div>
       </div>
       <div
-        className={`relative flex h-[420px] items-center justify-center p-6 sm:h-[560px] ${source ? 'checkerboard' : 'dotted'} ${dragging ? 'outline-2 -outline-offset-2 outline-accent' : ''}`}
+        className={`relative flex h-[420px] items-center justify-center p-6 sm:h-[560px] ${source ? (transparent ? 'checkerboard' : '') : 'dotted'} ${dragging ? 'outline-2 -outline-offset-2 outline-accent' : ''}`}
+        style={{ backgroundColor: source && !transparent ? background : undefined }}
         onDragEnter={(event) => {
           event.preventDefault();
           if (!locked && token) {
@@ -120,8 +122,11 @@ export default function PreviewPanel({
       {source && !resultTab && (
         <div className="flex items-center justify-between gap-3 border-t border-white/10 px-5 py-3 text-xs text-slate-400">
           <span>
-            Size &amp; background preview · {settings.width || '—'} ×{' '}
-            {settings.height || '—'} px. Export to preview GIF timing and colors.
+            Live preview · {settings.width || '—'} × {settings.height || '—'} px ·{' '}
+            {background === 'transparent'
+              ? 'Transparent (checkerboard)'
+              : background.toUpperCase()}
+            . Export to update GIF timing and colors.
           </span>
           <button type="button" className="text-button shrink-0" onClick={restartPreview}>
             Restart ↻

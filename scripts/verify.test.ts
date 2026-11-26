@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { Document } from '../lib/animation.ts';
 import { createApi } from '../lib/api.ts';
 import { convert } from '../lib/converter.ts';
@@ -11,6 +12,7 @@ import { Cancelled, settings } from '../lib/document.ts';
 import { gifFrame, gifHeader } from '../lib/gif.ts';
 import { presetDimensions } from '../lib/presets.ts';
 import { streamGif } from '../lib/client.ts';
+import { clearSvgBackground } from '../lib/svg-background.ts';
 import type { ExportEvent, JobSnapshot } from '../lib/types.ts';
 import { httpClient } from './http-client.ts';
 
@@ -19,6 +21,95 @@ const svg = (content: string) =>
 const moving = svg(
   '<rect x="0" y="10" width="10" height="10" fill="red"><animate attributeName="x" values="0;60" dur="1s" repeatCount="indefinite"/></rect>',
 );
+
+test('SVG preview and GIF export replace embedded backgrounds while preserving black artwork', async (context) => {
+  const folder = await mkdtemp(path.join(tmpdir(), 'svg-background-'));
+  context.after(() => rm(folder, { recursive: true, force: true }));
+  const backgrounds = [
+    '',
+    '<rect width="100%" height="100%" fill="black"/>',
+    '<g><rect width="80" height="40" fill="white"/></g>',
+    '<path d="M0 0h80v40H0z" fill="black"/>',
+  ];
+
+  for (const [index, layer] of backgrounds.entries()) {
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 40" style="background:#000!important"><style>svg{background-color:black!important}</style>${layer}<circle cx="40" cy="20" r="10" fill="black"/><circle cx="65" cy="20" r="5" fill="red"/></svg>`;
+    const document = new DOMParser().parseFromString(source, 'image/svg+xml');
+    clearSvgBackground(document.documentElement!);
+    const preview = new XMLSerializer().serializeToString(document);
+    assert.match(
+      document.documentElement!.getAttribute('style')!,
+      /background-color:transparent!important$/,
+    );
+
+    for (const background of ['transparent', '#ffffff', '#000000', '#00ff00']) {
+      const output = path.join(folder, `${index}-${background}.gif`);
+      await convert(source, output, { background });
+      const gifPixels = await sharp(output).ensureAlpha().raw().toBuffer();
+      let render = sharp(Buffer.from(preview)).ensureAlpha();
+      if (background !== 'transparent')
+        render = render.flatten({ background }).ensureAlpha();
+      const previewPixels = await render.raw().toBuffer();
+      const expected =
+        background === 'transparent'
+          ? [0, 0, 0, 0]
+          : [...Buffer.from(background.slice(1), 'hex'), 255];
+      assert.deepEqual(Array.from(gifPixels.subarray(0, 4)), expected);
+      assert.deepEqual(Array.from(previewPixels.subarray(0, 4)), expected);
+      for (const pixels of [gifPixels, previewPixels]) {
+        assert.deepEqual(
+          Array.from(pixels.subarray((20 * 80 + 40) * 4, (20 * 80 + 40) * 4 + 4)),
+          [0, 0, 0, 255],
+        );
+        assert.deepEqual(
+          Array.from(pixels.subarray((20 * 80 + 65) * 4, (20 * 80 + 65) * 4 + 4)),
+          [255, 0, 0, 255],
+        );
+      }
+    }
+  }
+});
+
+test('background removal preserves definitions, outlines, transformed and animated artwork', () => {
+  for (const layer of [
+    '<rect width="80" height="40" fill="none" stroke="black"/>',
+    '<rect width="80" height="40" fill="black" transform="rotate(30)"/>',
+    '<rect width="80" height="40" fill="black"><animate attributeName="x" values="0;20" dur="1s"/></rect>',
+    '<path d="M0 0 L80 40 L80 0 L0 40Z" fill="black"/>',
+    '<g transform="scale(0.5)"><rect width="80" height="40" fill="black"/></g>',
+    '<rect id="paint" width="80" height="40" fill="black"/><use href="#paint"/>',
+  ]) {
+    const document = new DOMParser().parseFromString(svg(layer), 'image/svg+xml');
+    clearSvgBackground(document.documentElement!);
+    assert.doesNotMatch(new XMLSerializer().serializeToString(document), /display:none/);
+  }
+  const document = new DOMParser().parseFromString(
+    svg(
+      '<defs><clipPath id="clip"><rect width="80" height="40"/></clipPath></defs><rect width="80" height="40" fill="black"/><circle cx="40" cy="20" r="5" fill="red" clip-path="url(#clip)"/>',
+    ),
+    'image/svg+xml',
+  );
+  clearSvgBackground(document.documentElement!);
+  const rectangles = document.getElementsByTagName('rect');
+  assert.doesNotMatch(rectangles[0].getAttribute('style') || '', /display:none/);
+  assert.match(rectangles[1].getAttribute('style') || '', /display:none/);
+});
+
+test('animated exports keep transparent backgrounds after removing a canvas layer', async (context) => {
+  const folder = await mkdtemp(path.join(tmpdir(), 'svg-background-'));
+  context.after(() => rm(folder, { recursive: true, force: true }));
+  const source = moving.replace(
+    '<rect x=',
+    '<rect width="80" height="40" fill="black"/><rect x=',
+  );
+  const output = path.join(folder, 'moving.gif');
+  await convert(source, output, { fps: 2 });
+  const pixels = await sharp(output, { animated: true }).ensureAlpha().raw().toBuffer();
+  assert.equal(pixels[3], 0);
+  assert.equal(pixels[80 * 40 * 4 + 3], 0);
+  assert.equal(pixels[(15 * 80 + 5) * 4 + 3], 255);
+  assert.equal(pixels[(40 * 80 + 15 * 80 + 5) * 4 + 3], 0);
+});
 
 function streamEvents(body: Buffer): ExportEvent[] {
   return body

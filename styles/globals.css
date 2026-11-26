@@ -55,11 +55,11 @@
   }
 }
 .checkerboard {
-  background-color: #171a20;
+  background-color: #ffffff;
   background-image: conic-gradient(
-    #20242c 25%,
+    #d1d5db 25%,
     transparent 0 50%,
-    #20242c 0 75%,
+    #d1d5db 0 75%,
     transparent 0
   );
   background-size: 24px 24px;

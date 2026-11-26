@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, streamGif } from '../lib/client.ts';
 import { presetDimensions } from '../lib/presets.ts';
 import { errorMessage } from '../lib/errors.ts';
+import { clearSvgBackground } from '../lib/svg-background.ts';
 import type {
   SvgMetadata,
   SourceFile,
@@ -103,6 +104,9 @@ export function useConverter() {
     if (!source) return;
     const document = new DOMParser().parseFromString(source.svg, 'image/svg+xml');
     const root = document.documentElement;
+    clearSvgBackground(root);
+    if (!root.hasAttribute('viewBox'))
+      root.setAttribute('viewBox', `0 0 ${source.meta.width} ${source.meta.height}`);
     const width = Math.min(4096, Math.max(16, Number(settings.width) || 16));
     const height = Math.min(4096, Math.max(16, Number(settings.height) || 16));
     root.setAttribute('width', String(width));
@@ -114,6 +118,10 @@ export function useConverter() {
     setPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [source, settings.width, settings.height, previewKey]);
+  useEffect(() => {
+    setResult(null);
+    setResultTab(false);
+  }, [settings.background, settings.customColor]);
   useEffect(() => {
     return () => {
       if (result?.url.startsWith('blob:')) URL.revokeObjectURL(result.url);

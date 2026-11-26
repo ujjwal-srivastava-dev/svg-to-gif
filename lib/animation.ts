@@ -2,6 +2,7 @@ import Color from '@img/colour';
 import { DOMParser, XMLSerializer, type Element } from '@xmldom/xmldom';
 import { inspect, ConversionError, seconds } from './document.ts';
 import type { SvgMetadata } from './types.ts';
+import { clearSvgBackground } from './svg-background.ts';
 
 interface Animation {
   target: Element;
@@ -92,6 +93,7 @@ export class Document {
     this.root = doc.documentElement;
     if (!this.root.hasAttribute('viewBox'))
       this.root.setAttribute('viewBox', `0 0 ${this.meta.width} ${this.meta.height}`);
+    clearSvgBackground(this.root);
     const elements = Array.from(this.root.getElementsByTagName('*'));
     const ids = new Map(
       elements.filter((e) => e.hasAttribute('id')).map((e) => [e.getAttribute('id'), e]),

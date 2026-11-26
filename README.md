@@ -27,7 +27,9 @@ Vercel mode limits the complete JSON upload to 4 MiB, including JSON escaping, a
 
 Choose quick export, 480p, 720p HD, 1080p Full HD, 1440p QHD, 2160p 4K, original size, or custom dimensions. With aspect ratio locked, artwork fits inside the preset: 16:9 artwork exports at 1920 × 1080 for Full HD; square artwork exports at 1080 × 1080. Unlock aspect ratio to use the full preset canvas. The actual dimensions are always displayed before export.
 
-The SVG preview updates to the selected dimensions and background; Restart replays the source animation. This preview uses browser SVG playback. Select Exported GIF after conversion to check the actual GIF timing, palette, dithering, and transparency.
+The SVG preview updates immediately to the selected dimensions and background; Restart replays the source animation. Transparent uses a light checkerboard. White, black, dark blue, and custom colors appear directly on the preview canvas. Changing the background clears the previous GIF and returns to the live SVG preview; convert again to download the updated GIF. This preview uses browser SVG playback. Select Exported GIF after conversion to check the actual GIF timing, palette, dithering, and transparency.
+
+Preview and export both clear the SVG root's CSS background and hide plain, leading canvas-sized rectangles or rectangular paths, so an embedded black or white background does not cover the selected background. Foreground colors, including black artwork, are preserved. Transformed shapes, animated shapes, outlines, definitions, and embedded raster images are not treated as plain canvas backgrounds. Backgrounds drawn as complex artwork require editing the source SVG.
 
 ## Docker deployment
 
@@ -80,7 +82,7 @@ CLI commands require development dependencies. Existing outputs are preserved un
 - Rejects scripts, external assets, CSS animation, event-based timing, motion paths, and unsupported animation combinations.
 - Uses a shared color palette and clears previous frames to prevent trails.
 - Preserves opaque black artwork separately from transparent pixels.
-- GIF supports binary transparency. Pixels with alpha below 128 become transparent; remaining pixels become opaque. Explicit background shapes in the SVG are preserved.
+- GIF supports binary transparency. Pixels with alpha below 128 become transparent; remaining pixels become opaque. Plain SVG canvas backgrounds are replaced by the selected export background.
 
 SVG uploads are limited to 10 MB on Node/Docker and a 4 MiB JSON request on Vercel. Export limits are 4096px per dimension, 50 fps, 120 seconds, 1800 frames, and 800 million total pixels. These workload limits also apply to HD and 4K presets. In Node/Docker mode, a conversion may run for up to 10 minutes; one export runs at a time, and the last 10 results are retained for up to 30 minutes. Browser sessions expire after inactivity. Each session can access only its own exports. Vercel mode uses the streaming lifecycle described above.
 
