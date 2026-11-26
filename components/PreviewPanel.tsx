@@ -20,7 +20,12 @@ export default function PreviewPanel({
     dragDepth,
     setDragging,
     loadFile,
+    settings,
+    restartPreview,
+    maxInputMB,
   } = controller;
+  const background =
+    settings.background === 'custom' ? settings.customColor : settings.background;
   return (
     <section className="panel" aria-label="Animation preview">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
@@ -39,13 +44,13 @@ export default function PreviewPanel({
               onClick={() => setResultTab(isResult)}
               className={`rounded-md px-3 py-1.5 text-xs ${resultTab === isResult ? 'bg-slate-600/60 text-white' : 'text-slate-400'}`}
             >
-              {isResult ? 'Exported GIF' : 'Original SVG'}
+              {isResult ? 'Exported GIF' : 'SVG preview'}
             </button>
           ))}
         </div>
       </div>
       <div
-        className={`relative grid h-[420px] place-items-center p-6 sm:h-[560px] ${source ? 'checkerboard' : 'dotted'} ${dragging ? 'outline-2 -outline-offset-2 outline-accent' : ''}`}
+        className={`relative flex h-[420px] items-center justify-center p-6 sm:h-[560px] ${source ? 'checkerboard' : 'dotted'} ${dragging ? 'outline-2 -outline-offset-2 outline-accent' : ''}`}
         onDragEnter={(event) => {
           event.preventDefault();
           if (!locked && token) {
@@ -70,8 +75,13 @@ export default function PreviewPanel({
         {source && preview ? (
           <img
             src={resultTab && result ? result.url : preview}
-            alt={resultTab ? 'Exported GIF animation' : 'Original SVG animation'}
-            className="size-full min-h-0 object-contain"
+            alt={
+              resultTab
+                ? 'Exported GIF animation'
+                : 'SVG animation at selected output dimensions'
+            }
+            className="max-h-full max-w-full object-contain"
+            style={{ backgroundColor: resultTab ? 'transparent' : background }}
           />
         ) : (
           <div className="flex flex-col items-center gap-4 text-center">
@@ -97,7 +107,7 @@ export default function PreviewPanel({
               Or try the sample animation ↗
             </button>
             <span className="text-xs text-slate-500">
-              Animated or static SVG · up to 10 MB
+              Animated or static SVG · up to {maxInputMB} MB
             </span>
           </div>
         )}
@@ -107,6 +117,17 @@ export default function PreviewPanel({
           </div>
         )}
       </div>
+      {source && !resultTab && (
+        <div className="flex items-center justify-between gap-3 border-t border-white/10 px-5 py-3 text-xs text-slate-400">
+          <span>
+            Size &amp; background preview · {settings.width || '—'} ×{' '}
+            {settings.height || '—'} px. Export to preview GIF timing and colors.
+          </span>
+          <button type="button" className="text-button shrink-0" onClick={restartPreview}>
+            Restart ↻
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4 border-t border-white/10 px-5 py-4">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">

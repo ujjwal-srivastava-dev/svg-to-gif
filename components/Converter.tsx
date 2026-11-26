@@ -39,7 +39,7 @@ export default function Converter() {
           <ExportSettings controller={controller} />
         </div>
         <footer className="flex flex-col justify-between gap-2 py-6 text-xs text-slate-500 sm:flex-row">
-          <span>No account required. Exports expire automatically.</span>
+          <span>No account required. Download your GIF before closing this page.</span>
           <span>SMIL animation · transparent output · shared color palette</span>
         </footer>
       </main>

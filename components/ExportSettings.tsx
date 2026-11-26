@@ -1,6 +1,6 @@
 import type { ConverterController } from '../hooks/useConverter.ts';
 import { defaults } from '../hooks/useConverter.ts';
-import { bytes } from '../lib/client.ts';
+import { presetDimensions, resolutionPresets } from '../lib/presets.ts';
 import { Field, Check } from './FormControls';
 
 export default function ExportSettings({
@@ -30,6 +30,7 @@ export default function ExportSettings({
     cancel,
     result,
     notice,
+    mode,
   } = controller;
   return (
     <aside className="panel">
@@ -53,8 +54,11 @@ export default function ExportSettings({
               value={settings.preset}
               onChange={(e) => preset(e.target.value)}
             >
-              <option value="480">480 px · quick export</option>
-              <option value="720">720 px wide</option>
+              {resolutionPresets.map(({ id, label, width, height }) => (
+                <option key={id} value={id}>
+                  {label} · {width} × {height}
+                </option>
+              ))}
               <option value="original">Original dimensions</option>
               <option value="custom">Custom dimensions</option>
             </select>
@@ -81,18 +85,24 @@ export default function ExportSettings({
               setSettings((s) => ({
                 ...s,
                 aspect: e.target.checked,
-                ...(e.target.checked
-                  ? {
-                      height: Math.round(
-                        (Number(s.width) * source!.meta.height) / source!.meta.width,
-                      ),
-                    }
-                  : {}),
+                ...(s.preset !== 'custom'
+                  ? presetDimensions(s.preset, source!.meta, e.target.checked)
+                  : e.target.checked
+                    ? {
+                        height: Math.round(
+                          (Number(s.width) * source!.meta.height) / source!.meta.width,
+                        ),
+                      }
+                    : {}),
               }))
             }
           >
             Keep aspect ratio
           </Check>
+          <p className="mb-4 text-xs leading-relaxed text-slate-400">
+            Presets fit your artwork inside the selected resolution when aspect ratio is
+            locked. Custom sizes support up to 4096 px per side.
+          </p>
           <div className="my-5 border-t border-white/10" />
           <div className="grid grid-cols-2 gap-3">
             <Field label="Frame rate (fps)">
@@ -255,7 +265,7 @@ export default function ExportSettings({
           <button
             type="button"
             className="text-button"
-            disabled={!jobId || cancelling}
+            disabled={(mode !== 'stream' && !jobId) || cancelling}
             onClick={cancel}
           >
             {cancelling ? 'Cancelling…' : 'Cancel export'}

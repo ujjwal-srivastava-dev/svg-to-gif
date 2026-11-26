@@ -5,7 +5,10 @@ const state = globalThis as typeof globalThis & {
   svgStudioApi?: ReturnType<typeof createApi>;
 };
 
-export const config = { api: { bodyParser: false, responseLimit: false } };
+export const config = {
+  api: { bodyParser: false, responseLimit: false },
+  maxDuration: 300,
+};
 
 export default async function handler(
   request: NextApiRequest,

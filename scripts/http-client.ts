@@ -1,5 +1,5 @@
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http';
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 
 export type HttpHandler = (
   request: IncomingMessage,
@@ -22,6 +22,7 @@ export function httpClient(handler: HttpHandler, origin = 'http://localhost:3000
     url: string,
     body?: unknown,
     extraHeaders: Record<string, string> = {},
+    signal?: AbortSignal,
   ): Promise<HttpResult> {
     const bytes =
       body === undefined
@@ -41,44 +42,57 @@ export function httpClient(handler: HttpHandler, origin = 'http://localhost:3000
     }) as unknown as IncomingMessage;
 
     return new Promise((resolve, reject) => {
-      const response = {
-        statusCode: 200,
-        headersSent: false,
-        destroyed: false,
-        headers: {} as OutgoingHttpHeaders,
-        setHeader(name: string, value: string | string[] | number) {
-          this.headers[name.toLowerCase()] = value;
-          return this;
+      const chunks: Buffer[] = [];
+      const response = Object.assign(
+        new Writable({
+          write(chunk: Buffer, _encoding, callback) {
+            chunks.push(Buffer.from(chunk));
+            callback();
+          },
+        }),
+        {
+          statusCode: 200,
+          headersSent: false,
+          headers: {} as OutgoingHttpHeaders,
+          setHeader(name: string, value: string | string[] | number) {
+            this.headers[name.toLowerCase()] = value;
+            return this;
+          },
+          writeHead(status: number, headers: OutgoingHttpHeaders) {
+            this.statusCode = status;
+            this.headers = { ...this.headers, ...headers };
+            this.headersSent = true;
+            return this;
+          },
+          status(status: number) {
+            this.statusCode = status;
+            return this;
+          },
+          json(this: Writable, value: unknown) {
+            this.end(Buffer.from(JSON.stringify(value)));
+          },
         },
-        writeHead(status: number, headers: OutgoingHttpHeaders) {
-          this.statusCode = status;
-          this.headers = { ...this.headers, ...headers };
-          this.headersSent = true;
-          return this;
-        },
-        status(status: number) {
-          this.statusCode = status;
-          return this;
-        },
-        json(value: unknown) {
-          this.end(Buffer.from(JSON.stringify(value)));
-        },
-        end(bytes: Buffer) {
-          const setCookie = this.headers['set-cookie'];
-          if (typeof setCookie === 'string') cookie = setCookie.split(';')[0];
-          const result: HttpResult = {
-            status: this.statusCode,
-            headers: this.headers,
-            body: bytes,
-            json<T>() {
-              return JSON.parse(bytes.toString()) as T;
-            },
-          };
-          if (url === '/api/session' && this.statusCode === 200)
-            token = result.json<{ token: string }>().token;
-          resolve(result);
-        },
-      };
+      );
+      const abort = () => response.destroy(new Error('Client disconnected.'));
+      signal?.addEventListener('abort', abort, { once: true });
+      response.once('error', reject);
+      response.once('close', () => signal?.removeEventListener('abort', abort));
+      response.once('finish', () => {
+        const bytes = Buffer.concat(chunks);
+        const setCookie = response.headers['set-cookie'];
+        if (typeof setCookie === 'string') cookie = setCookie.split(';')[0];
+        const result: HttpResult = {
+          status: response.statusCode,
+          headers: response.headers,
+          body: bytes,
+          json<T>() {
+            return JSON.parse(bytes.toString()) as T;
+          },
+        };
+        if (url === '/api/session' && response.statusCode === 200)
+          token = result.json<{ token: string }>().token;
+        resolve(result);
+      });
 
       handler(request, response as unknown as ServerResponse).catch(reject);
     });

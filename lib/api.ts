@@ -5,6 +5,7 @@ import { errorMessage } from './errors.ts';
 import { serverConfig, type ServerConfig } from './server/config.ts';
 import { Jobs } from './server/jobs.ts';
 import { Sessions } from './server/sessions.ts';
+import { streamExport } from './server/stream.ts';
 import type { ConversionOptions } from './types.ts';
 
 function respond(
@@ -23,14 +24,18 @@ function respond(
   response.end(bytes);
 }
 
-async function readPayload(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readPayload(
+  request: IncomingMessage,
+  limit: number,
+): Promise<Record<string, unknown>> {
   let size = 0;
   const chunks: Buffer[] = [];
 
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
     size += buffer.length;
-    if (size > MAX_INPUT * 2) throw new ConversionError('Request is too large.');
+    if (size > limit)
+      throw new ConversionError('Request is too large. Choose a smaller SVG.');
     chunks.push(buffer);
   }
 
@@ -52,6 +57,8 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
   const config = serverConfig(overrides);
   const sessions = new Sessions(config);
   const jobs = await Jobs.create(config);
+  const maxRequestBytes = config.streaming ? 4 * 1024 * 1024 : MAX_INPUT * 2;
+  let streaming = false;
   const cleanup = setInterval(() => {
     sessions.prune();
     void jobs
@@ -74,29 +81,34 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
 
       const configuredHost = new URL(config.origin).host;
       const host = request.headers.host;
+      const deploymentHost = config.streaming && host === process.env.VERCEL_URL;
       const localHost =
         process.env.NODE_ENV !== 'production' &&
         /^(?:localhost|127\.0\.0\.1):\d+$/.test(host || '');
 
-      if (host !== configuredHost && !localHost) {
+      if (host !== configuredHost && !localHost && !deploymentHost) {
         respond(response, 403, { error: 'Use the configured application URL.' });
         return;
       }
 
       if (request.method === 'GET' && pathname === '/api/session') {
+        if (config.streaming) {
+          respond(response, 200, { token: 'stream', mode: 'stream', maxRequestBytes });
+          return;
+        }
         const session = sessions.open(request, response);
         respond(
           response,
           session ? 200 : 429,
           session
-            ? { token: session.token }
+            ? { token: session.token, mode: 'jobs', maxRequestBytes }
             : { error: 'The server is busy. Try again shortly.' },
         );
         return;
       }
 
       const session = sessions.get(request);
-      if (!session) {
+      if (!session && !config.streaming) {
         respond(response, 403, {
           error: 'Your session expired. Reload the page before continuing.',
         });
@@ -104,6 +116,10 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
       }
 
       if (request.method === 'GET') {
+        if (!session || config.streaming) {
+          respond(response, 404, { error: 'Export again to download your GIF.' });
+          return;
+        }
         const match = /^\/api\/jobs\/([a-f0-9]{32})(\/download)?$/.exec(pathname);
         const job = match ? jobs.get(match[1], session.id) : undefined;
 
@@ -137,9 +153,12 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
 
       const origin = request.headers.origin;
       const localOrigin = localHost && origin === `http://${host}`;
+      const deploymentOrigin = deploymentHost && origin === `https://${host}`;
       if (
-        request.headers['x-converter-token'] !== session.token ||
-        (origin && origin !== config.origin && !localOrigin)
+        request.headers['x-converter-token'] !==
+          (config.streaming ? 'stream' : session?.token) ||
+        (config.streaming && !origin) ||
+        (origin && origin !== config.origin && !localOrigin && !deploymentOrigin)
       ) {
         respond(response, 403, {
           error: 'The request could not be verified. Reload the page.',
@@ -147,7 +166,7 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
         return;
       }
 
-      if (!sessions.allowRequest(session)) {
+      if (session && !sessions.allowRequest(session)) {
         response.setHeader('Retry-After', '60');
         respond(response, 429, { error: 'Too many requests. Try again in one minute.' });
         return;
@@ -158,9 +177,9 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
         return;
       }
 
-      const payload = await readPayload(request);
+      const payload = await readPayload(request, maxRequestBytes);
       const cancel = /^\/api\/jobs\/([a-f0-9]{32})\/cancel$/.exec(pathname);
-      if (cancel) {
+      if (cancel && session && !config.streaming) {
         const found = jobs.cancel(cancel[1], session.id);
         respond(
           response,
@@ -185,8 +204,28 @@ export async function createApi(overrides: Partial<ServerConfig> = {}) {
       }
 
       settings(metadata, payload.options);
+      if (config.streaming) {
+        if (streaming) {
+          respond(response, 409, {
+            error: 'Another export is running. Please try again shortly.',
+          });
+          return;
+        }
+        streaming = true;
+        try {
+          await streamExport(
+            response,
+            payload.svg,
+            (payload.options ?? {}) as ConversionOptions,
+            config.jobTimeout,
+          );
+        } finally {
+          streaming = false;
+        }
+        return;
+      }
       const id = await jobs.start(
-        session.id,
+        session!.id,
         payload.svg,
         (payload.options ?? {}) as ConversionOptions,
       );

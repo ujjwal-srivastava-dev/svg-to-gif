@@ -5,6 +5,16 @@ const config: NextConfig = {
   experimental: { useTypeScriptCli: false },
   poweredByHeader: false,
   serverExternalPackages: ['sharp', '@xmldom/xmldom', '@img/colour'],
+  outputFileTracingIncludes: {
+    '/api/*': [
+      './dist/**/*.js',
+      './node_modules/sharp/**/*',
+      './node_modules/@img/**/*',
+      './node_modules/@xmldom/xmldom/**/*',
+      './node_modules/detect-libc/**/*',
+      './node_modules/semver/**/*',
+    ],
+  },
   async headers() {
     return [
       {

@@ -9,7 +9,9 @@ import { createApi } from '../lib/api.ts';
 import { convert } from '../lib/converter.ts';
 import { Cancelled, settings } from '../lib/document.ts';
 import { gifFrame, gifHeader } from '../lib/gif.ts';
-import type { JobSnapshot } from '../lib/types.ts';
+import { presetDimensions } from '../lib/presets.ts';
+import { streamGif } from '../lib/client.ts';
+import type { ExportEvent, JobSnapshot } from '../lib/types.ts';
 import { httpClient } from './http-client.ts';
 
 const svg = (content: string) =>
@@ -17,6 +19,199 @@ const svg = (content: string) =>
 const moving = svg(
   '<rect x="0" y="10" width="10" height="10" fill="red"><animate attributeName="x" values="0;60" dur="1s" repeatCount="indefinite"/></rect>',
 );
+
+function streamEvents(body: Buffer): ExportEvent[] {
+  return body
+    .toString()
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as ExportEvent);
+}
+
+test('HD presets preserve artwork aspect ratios and support full video dimensions', () => {
+  const landscape = { width: 160, height: 90, animations: 1, duration: 1 };
+  assert.deepEqual(presetDimensions('720p', landscape, true), {
+    width: 1280,
+    height: 720,
+  });
+  assert.deepEqual(presetDimensions('1080p', landscape, true), {
+    width: 1920,
+    height: 1080,
+  });
+  assert.deepEqual(presetDimensions('2160p', landscape, true), {
+    width: 3840,
+    height: 2160,
+  });
+  assert.deepEqual(presetDimensions('1080p', { ...landscape, width: 90 }, true), {
+    width: 1080,
+    height: 1080,
+  });
+  assert.deepEqual(
+    presetDimensions('720p', { ...landscape, width: 90, height: 160 }, true),
+    { width: 405, height: 720 },
+  );
+  assert.deepEqual(presetDimensions('1080p', { ...landscape, width: 90 }, false), {
+    width: 1920,
+    height: 1080,
+  });
+});
+
+test('serverless exports stream across fresh instances and produce transparent HD GIFs', async (context) => {
+  const first = await createApi({ streaming: true });
+  const second = await createApi({ streaming: true });
+  context.after(async () => {
+    await first.close();
+    await second.close();
+  });
+  let service = first;
+  const client = httpClient((request, response) => service.handler(request, response));
+  assert.equal(
+    (await client.request('GET', '/api/session')).json<{ mode: string }>().mode,
+    'stream',
+  );
+  service = second;
+  assert.equal(
+    (await client.request('POST', '/api/inspect', { svg: moving })).status,
+    200,
+  );
+  assert.equal(
+    (
+      await client.request(
+        'POST',
+        '/api/convert',
+        { svg: moving },
+        { origin: 'https://evil.example' },
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await client.request(
+        'POST',
+        '/api/convert',
+        { svg: moving },
+        { 'x-converter-token': '' },
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await client.request('POST', '/api/inspect', { svg: ' '.repeat(4 * 1024 * 1024) }))
+      .status,
+    400,
+  );
+  for (const [width, height] of [
+    [1280, 720],
+    [1920, 1080],
+  ]) {
+    const response = await client.request('POST', '/api/convert', {
+      svg: svg('<rect x="10" y="10" width="10" height="10" fill="red"/>'),
+      options: { width, height },
+    });
+    assert.equal(response.status, 200);
+    const events = streamEvents(response.body);
+    assert.ok(events.some((event) => event.type === 'progress'));
+    const done = events.at(-1);
+    assert.equal(done?.type, 'done', response.body.toString());
+    const gif = Buffer.concat(
+      events.flatMap((event) =>
+        event.type === 'chunk' ? [Buffer.from(event.data, 'base64')] : [],
+      ),
+    );
+    const metadata = await sharp(gif).metadata();
+    assert.equal(metadata.width, width);
+    assert.equal(metadata.height, height);
+    assert.equal((await sharp(gif).ensureAlpha().raw().toBuffer())[3], 0);
+    if (done?.type === 'done') assert.equal(gif.length, done.result.bytes);
+  }
+});
+
+test('streaming timeout and browser disconnect clean up workers and temporary files', async (context) => {
+  const service = await createApi({ streaming: true, jobTimeout: 1 });
+  context.after(() => service.close());
+  const before = (await readdir(tmpdir()))
+    .filter((name) => name.startsWith('svg-stream-'))
+    .sort();
+  const client = httpClient(service.handler);
+  await client.request('GET', '/api/session');
+  const response = await client.request('POST', '/api/convert', { svg: moving });
+  const event = streamEvents(response.body).at(-1);
+  assert.equal(event?.type, 'error');
+  if (event?.type === 'error') assert.match(event.message, /too long/);
+  assert.deepEqual(
+    (await readdir(tmpdir())).filter((name) => name.startsWith('svg-stream-')).sort(),
+    before,
+  );
+
+  const normal = await createApi({ streaming: true });
+  context.after(() => normal.close());
+  const controller = new AbortController();
+  let completed: Promise<void> | undefined;
+  const disconnecting = httpClient((request, response) => {
+    completed = normal.handler(request, response);
+    if (request.url === '/api/convert') setTimeout(() => controller.abort(), 30);
+    return completed;
+  });
+  await disconnecting.request('GET', '/api/session');
+  await assert.rejects(
+    disconnecting.request(
+      'POST',
+      '/api/convert',
+      { svg: moving, options: { width: 1920, height: 1080, duration: 5 } },
+      {},
+      controller.signal,
+    ),
+    /disconnected/,
+  );
+  await completed;
+  assert.deepEqual(
+    (await readdir(tmpdir())).filter((name) => name.startsWith('svg-stream-')).sort(),
+    before,
+  );
+});
+
+test('browser reads fragmented export streams and rejects incomplete GIF transfers', async (context) => {
+  const result = { width: 16, height: 16, frames: 1, duration: 1, bytes: 3 };
+  const events: ExportEvent[] = [
+    { type: 'progress', progress: 0.5, message: 'Rendering' },
+    { type: 'chunk', data: Buffer.from([1, 2, 3]).toString('base64') },
+    { type: 'done', result },
+  ];
+  let content = events.map((event) => JSON.stringify(event) + '\n').join('');
+  context.mock.method(
+    globalThis,
+    'fetch',
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            const bytes = new TextEncoder().encode(content);
+            for (let offset = 0; offset < bytes.length; offset += 7)
+              controller.enqueue(bytes.slice(offset, offset + 7));
+            controller.close();
+          },
+        }),
+      ),
+  );
+  let progress = 0;
+  const output = await streamGif(
+    {},
+    'stream',
+    4096,
+    new AbortController().signal,
+    (value) => {
+      progress = value.progress;
+    },
+  );
+  assert.equal(progress, 0.5);
+  assert.deepEqual(Buffer.from(await output.blob.arrayBuffer()), Buffer.from([1, 2, 3]));
+  content = JSON.stringify(events[1]) + '\n';
+  await assert.rejects(
+    streamGif({}, 'stream', 4096, new AbortController().signal, () => {}),
+    /interrupted/,
+  );
+});
 
 async function waitForJob(
   client: ReturnType<typeof httpClient>,

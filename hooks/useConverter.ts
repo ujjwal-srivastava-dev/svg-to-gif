@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { api, ApiError } from '../lib/client.ts';
+import { api, ApiError, streamGif } from '../lib/client.ts';
+import { presetDimensions } from '../lib/presets.ts';
 import { errorMessage } from '../lib/errors.ts';
 import type {
   SvgMetadata,
@@ -8,11 +9,18 @@ import type {
   ExportResult,
   ConversionProgress,
   JobSnapshot,
+  SessionInfo,
 } from '../lib/types.ts';
 
 export const defaults = (meta: SvgMetadata): ExportSettings => ({
-  width: Math.min(480, Math.round(meta.width)),
-  height: Math.round((Math.min(480, Math.round(meta.width)) * meta.height) / meta.width),
+  width: Math.max(
+    16,
+    Math.round(meta.width * Math.min(1, 480 / meta.width, 480 / meta.height)),
+  ),
+  height: Math.max(
+    16,
+    Math.round(meta.height * Math.min(1, 480 / meta.width, 480 / meta.height)),
+  ),
   fps: 25,
   duration: Number(meta.duration.toFixed(6)),
   start: 0,
@@ -23,7 +31,7 @@ export const defaults = (meta: SvgMetadata): ExportSettings => ({
   customColor: '#ffffff',
   aspect: true,
   autoDuration: true,
-  preset: meta.width > 480 ? '480' : 'original',
+  preset: Math.max(meta.width, meta.height) > 480 ? '480' : 'original',
 });
 const initial: ExportSettings = {
   width: 480,
@@ -43,6 +51,8 @@ const initial: ExportSettings = {
 
 export function useConverter() {
   const [token, setToken] = useState<string | null>(null);
+  const [mode, setMode] = useState<SessionInfo['mode']>('jobs');
+  const [maxRequestBytes, setMaxRequestBytes] = useState(20 * 1024 * 1024);
   const [source, setSource] = useState<SourceFile | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [settings, setSettings] = useState<ExportSettings>(initial);
@@ -64,6 +74,8 @@ export function useConverter() {
   const input = useRef<HTMLInputElement>(null);
   const loadID = useRef(0);
   const dragDepth = useRef(0);
+  const exportController = useRef<AbortController | null>(null);
+  const [previewKey, setPreviewKey] = useState(0);
   const locked = busy || loading;
   const tell = (text: string, error = false) => setNotice({ text, error });
   const set = <K extends keyof ExportSettings>(name: K, value: ExportSettings[K]) =>
@@ -71,9 +83,11 @@ export function useConverter() {
 
   useEffect(() => {
     const controller = new AbortController();
-    api<{ token: string }>('/api/session', null, undefined, controller.signal)
+    api<SessionInfo>('/api/session', null, undefined, controller.signal)
       .then((session) => {
         setToken(session.token);
+        setMode(session.mode);
+        setMaxRequestBytes(session.maxRequestBytes);
         setNotice({ text: 'Ready. Choose an SVG or try the sample.', error: false });
       })
       .catch((error) => {
@@ -87,10 +101,25 @@ export function useConverter() {
   }, []);
   useEffect(() => {
     if (!source) return;
-    const url = URL.createObjectURL(new Blob([source.svg], { type: 'image/svg+xml' }));
+    const document = new DOMParser().parseFromString(source.svg, 'image/svg+xml');
+    const root = document.documentElement;
+    const width = Math.min(4096, Math.max(16, Number(settings.width) || 16));
+    const height = Math.min(4096, Math.max(16, Number(settings.height) || 16));
+    root.setAttribute('width', String(width));
+    root.setAttribute('height', String(height));
+    root.style.width = `${width}px`;
+    root.style.height = `${height}px`;
+    const svg = new XMLSerializer().serializeToString(document);
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
     setPreview(url);
     return () => URL.revokeObjectURL(url);
-  }, [source]);
+  }, [source, settings.width, settings.height, previewKey]);
+  useEffect(() => {
+    return () => {
+      if (result?.url.startsWith('blob:')) URL.revokeObjectURL(result.url);
+    };
+  }, [result]);
+  useEffect(() => () => exportController.current?.abort(), []);
   useEffect(() => {
     const prevent = (event: DragEvent) => event.preventDefault();
     window.addEventListener('dragover', prevent);
@@ -113,6 +142,7 @@ export function useConverter() {
     if (!jobId) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
     const finish = () => {
       setJobId(null);
       setBusy(false);
@@ -127,6 +157,7 @@ export function useConverter() {
           controller.signal,
         );
         if (controller.signal.aborted) return;
+        failures = 0;
         setProgress(job);
         if (job.state === 'done' && job.result) {
           setResult({ ...job.result, url: `/api/jobs/${jobId}/download` });
@@ -148,7 +179,10 @@ export function useConverter() {
         }
       } catch (error) {
         if (controller.signal.aborted) return;
-        if (error instanceof ApiError && (error.status === 404 || error.status === 403)) {
+        if (
+          ++failures >= 6 ||
+          (error instanceof ApiError && (error.status === 404 || error.status === 403))
+        ) {
           setNotice({ text: errorMessage(error), error: true });
           finish();
           return;
@@ -171,14 +205,23 @@ export function useConverter() {
     if (!file || locked || !token) return;
     if (!file.name.toLowerCase().endsWith('.svg'))
       return tell('Choose a file with an .svg extension.', true);
-    if (file.size > 10 * 1024 * 1024)
-      return tell('Choose an SVG smaller than 10 MB.', true);
+    if (file.size > Math.min(10 * 1024 * 1024, maxRequestBytes))
+      return tell(
+        `Choose an SVG smaller than ${Math.min(10, maxRequestBytes / 1024 / 1024)} MB.`,
+        true,
+      );
     const id = ++loadID.current;
     setLoading(true);
     tell('Reading SVG dimensions and animation…');
     try {
       const svg = await file.text();
-      const meta = await api<SvgMetadata>('/api/inspect', token, { svg });
+      const meta = await api<SvgMetadata>(
+        '/api/inspect',
+        token,
+        { svg },
+        undefined,
+        maxRequestBytes,
+      );
       if (id !== loadID.current) return;
       setSource({ svg, meta, name: file.name, size: file.size });
       setSettings(defaults(meta));
@@ -224,12 +267,12 @@ export function useConverter() {
     if (!metadata) return;
     setSettings((s) => {
       if (value === 'custom') return { ...s, preset: value };
-      const width = value === 'original' ? Math.round(metadata.width) : Number(value);
+      const dimensions = presetDimensions(value, metadata, s.aspect);
+      if (!dimensions) return s;
       return {
         ...s,
         preset: value,
-        width,
-        height: Math.round((width * metadata.height) / metadata.width),
+        ...dimensions,
       };
     });
   }
@@ -282,17 +325,52 @@ export function useConverter() {
         settings.background === 'custom' ? settings.customColor : settings.background,
     };
     try {
+      if (mode === 'stream') {
+        const controller = new AbortController();
+        exportController.current = controller;
+        try {
+          const output = await streamGif(
+            { svg: source.svg, options },
+            token,
+            maxRequestBytes,
+            controller.signal,
+            setProgress,
+          );
+          if (!controller.signal.aborted) {
+            setResult({ ...output.result, url: URL.createObjectURL(output.blob) });
+            setResultTab(true);
+            setProgress({ progress: 1, message: 'GIF ready' });
+            tell('Your GIF is ready. Preview it here or download below.');
+          }
+        } finally {
+          exportController.current = null;
+          setBusy(false);
+          setCancelling(false);
+        }
+        return;
+      }
       const { id } = await api<{ id: string }>('/api/convert', token, {
         svg: source.svg,
         options,
       });
       setJobId(id);
     } catch (error) {
-      tell(errorMessage(error), true);
+      const cancelled = error instanceof Error && error.name === 'AbortError';
+      tell(
+        cancelled
+          ? 'Export cancelled. Adjust settings and try again.'
+          : errorMessage(error),
+        !cancelled,
+      );
       setBusy(false);
     }
   }
   async function cancel() {
+    if (exportController.current) {
+      setCancelling(true);
+      exportController.current.abort();
+      return;
+    }
     if (!jobId) return;
     setCancelling(true);
     try {
@@ -305,6 +383,8 @@ export function useConverter() {
   const percent = Math.round(progress.progress * 100);
   return {
     token,
+    mode,
+    maxInputMB: Math.min(10, maxRequestBytes / 1024 / 1024),
     source,
     preview,
     settings,
@@ -334,6 +414,7 @@ export function useConverter() {
     convert,
     cancel,
     percent,
+    restartPreview: () => setPreviewKey((key) => key + 1),
   };
 }
 

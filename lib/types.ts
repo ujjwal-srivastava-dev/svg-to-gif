@@ -86,3 +86,15 @@ export interface ExportSettings {
 export interface ExportResult extends ConversionResult {
   url: string;
 }
+
+export type ExportEvent =
+  | ({ type: 'progress' } & ConversionProgress)
+  | { type: 'chunk'; data: string }
+  | { type: 'done'; result: ConversionResult }
+  | { type: 'error'; message: string };
+
+export interface SessionInfo {
+  token: string;
+  mode: 'jobs' | 'stream';
+  maxRequestBytes: number;
+}
