@@ -1,0 +1,87 @@
+@import 'tailwindcss';
+@theme {
+  --color-accent: #b8f18c;
+  --color-panel: #1a1d24;
+  --font-sans: Arial, Helvetica, sans-serif;
+}
+@layer base {
+  body {
+    @apply m-0 bg-[#101217] font-sans text-slate-100 antialiased;
+  }
+  button,
+  a,
+  input,
+  select,
+  summary {
+    @apply touch-manipulation;
+  }
+  button,
+  select,
+  summary {
+    @apply cursor-pointer;
+  }
+  button:disabled {
+    @apply cursor-not-allowed opacity-40;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  summary:focus-visible {
+    @apply outline-2 outline-offset-4 outline-accent;
+  }
+  input[type='checkbox'] {
+    @apply size-4 accent-accent;
+  }
+}
+@layer components {
+  .field {
+    @apply mt-2 mb-4 w-full rounded-lg border border-slate-600/70 bg-[#222630] px-3 py-2.5 text-sm text-slate-100;
+  }
+  .field:read-only {
+    @apply text-slate-400;
+  }
+  .primary {
+    @apply rounded-xl bg-accent px-5 py-3 text-sm font-bold text-[#1b2811] transition hover:bg-[#c9f8a3] disabled:hover:bg-accent;
+  }
+  .text-button {
+    @apply text-sm text-slate-400 transition hover:text-accent;
+  }
+  .check {
+    @apply mb-4 flex items-center gap-2.5 text-sm text-slate-400;
+  }
+  .panel {
+    @apply overflow-hidden rounded-2xl border border-white/10 bg-panel;
+  }
+}
+.checkerboard {
+  background-color: #171a20;
+  background-image: conic-gradient(
+    #20242c 25%,
+    transparent 0 50%,
+    #20242c 0 75%,
+    transparent 0
+  );
+  background-size: 24px 24px;
+}
+.dotted {
+  background-color: #171a20;
+  background-image: radial-gradient(#3c424c 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+progress {
+  appearance: none;
+  border: 0;
+}
+progress::-webkit-progress-bar {
+  background: #303941;
+  border-radius: 20px;
+}
+progress::-webkit-progress-value {
+  background: #b8f18c;
+  border-radius: 20px;
+}
+progress::-moz-progress-bar {
+  background: #b8f18c;
+  border-radius: 20px;
+}

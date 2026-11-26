@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480" fill="none">
+  <defs><linearGradient id="pin" x1="100" y1="70" x2="340" y2="360" gradientUnits="userSpaceOnUse"><stop stop-color="#b8f18c"/><stop offset="1" stop-color="#37b69b"/></linearGradient></defs>
+  <g transform="translate(0 0)">
+    <animateTransform attributeName="transform" type="translate" values="0 0;0 -20;0 0" dur="7.007s" repeatCount="indefinite" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.42 0 0.58 1;0.42 0 0.58 1"/>
+    <path d="M240 48C157 48 96 109 96 189C96 293 240 418 240 418S384 293 384 189C384 109 323 48 240 48Z" fill="url(#pin)"/>
+    <circle cx="240" cy="188" r="74" fill="#123c40"/>
+    <g transform="rotate(0 240 188)">
+      <animateTransform attributeName="transform" type="rotate" values="0 240 188;360 240 188" dur="7.007s" repeatCount="indefinite"/>
+      <circle cx="240" cy="188" r="46" stroke="#f1ffe8" stroke-width="12" stroke-dasharray="230 60" stroke-linecap="round"/>
+      <circle cx="240" cy="188" r="12" fill="#f1ffe8"/>
+    </g>
+  </g>
+</svg>

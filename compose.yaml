@@ -1,0 +1,12 @@
+services:
+  converter:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+    mem_limit: 2g
+    cpus: 2
+    stop_grace_period: 15s

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": false,
+    "incremental": false,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "lib",
+    "outDir": "dist"
+  },
+  "include": ["lib/worker.ts"],
+  "exclude": ["node_modules"]
+}
